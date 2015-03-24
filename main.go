@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"math/big"
 	"os"
 	"strconv"
@@ -19,14 +20,15 @@ const (
 	usage = `Short 1.0, short term memory tester.
 
 Usage:
-    ./short [options]
+    ./short [options] (test|train)
 
 Options:
     -f <file>     use specified file as database [default: ~/.config/short-term].
     -n <number>   show specified count of tests [default: 20].
     -c <count>    show specified count of numbers in tests [default: 7].
-    -i <min>      use specified number as minimum value of number [default: 10]
-    -a <max>      use specified number as maximum value of number [default: 99]
+    -i <min>      use specified number as minimum value of number [default: 10].
+    -a <max>      use specified number as maximum value of number [default: 99].
+	-b <nback>    depth of the n-back training [default: 2].
 `
 )
 
@@ -39,6 +41,7 @@ type Result struct {
 
 func main() {
 	args, _ := docopt.Parse(usage, nil, true, "1.0", false)
+	log.Printf("main.go:44 %#v", args)
 
 	file := args["-f"].(string)
 	if file[:2] == "~/" {
@@ -46,6 +49,7 @@ func main() {
 	}
 
 	var (
+		nBack, _        = strconv.Atoi(args["-b"].(string))
 		testsCount, _   = strconv.Atoi(args["-n"].(string))
 		numbersCount, _ = strconv.Atoi(args["-c"].(string))
 		minNumber, _    = strconv.Atoi(args["-i"].(string))
@@ -60,9 +64,15 @@ func main() {
 	clearScreen()
 
 	results := []Result{}
-	for i := 0; i < testsCount; i++ {
-		result := runTest(minNumber, maxNumber, numbersCount)
-		results = append(results, result)
+
+	switch {
+	case args["train"]:
+		runTraining(nBack, numbersCount, minNumber, maxNumber)
+	case args["test"]:
+		for i := 0; i < testsCount; i++ {
+			result := runTest(minNumber, maxNumber, numbersCount)
+			results = append(results, result)
+		}
 	}
 
 	var (
@@ -83,6 +93,62 @@ func main() {
 	fmt.Printf("Score: %.2f (%.2f sec)\n", avgScore, avgDuration)
 
 	saveResults(file, results, sumScore, avgDuration)
+}
+
+func runTraining(nBack, numbersCount, minNumber, maxNumber int) Result {
+	width, height := termbox.Size()
+
+	x := width / 2
+	y := height / 2
+
+	printTextCentered(
+		fmt.Sprintf(
+			"You need to remember next %d numbers.",
+			nBack,
+		),
+		x, y,
+	)
+
+	printTextCentered(
+		fmt.Sprintf(
+			"Then, remember shown number and enter number seen %d steps back.",
+			nBack,
+		),
+		x, y+1,
+	)
+
+	termbox.HideCursor()
+	termbox.Flush()
+
+	wait()
+	clearScreen()
+
+	numbers := generateRandomNumbers(minNumber, maxNumber, numbersCount)
+
+	timeStart := time.Now()
+
+	score := 0
+
+	for i := 0; i < nBack; i++ {
+		printTextCentered(fmt.Sprint(numbers[i]), x, y-1)
+		readText(x, y+1)
+	}
+
+	for i := nBack; i < numbersCount; i++ {
+		printTextCentered(fmt.Sprint(numbers[i]), x, y-1)
+		previousNumber := readText(x, y+1)
+		if previousNumber == fmt.Sprint(numbers[i-nBack]) {
+			score++
+		}
+	}
+
+	timeEnd := time.Now()
+
+	return Result{
+		Score:    score,
+		Duration: timeEnd.Sub(timeStart).Seconds(),
+		Count:    numbersCount,
+	}
 }
 
 func saveResults(
@@ -204,6 +270,9 @@ func getNumbers(x, y int) []int {
 }
 
 func readText(x, y int) string {
+	termbox.SetCursor(x, y)
+	termbox.Flush()
+
 	text := ""
 	for {
 		event := termbox.PollEvent()
@@ -289,6 +358,13 @@ func printText(text string, x, y int) {
 		)
 	}
 
-	termbox.SetCursor(x+1, y)
+	if text != "" {
+		termbox.SetCursor(x+1, y)
+	}
+
 	termbox.Flush()
+}
+
+func printTextCentered(text string, x, y int) {
+	printText(text, x-len(text)/2, y)
 }
